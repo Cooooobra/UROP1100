@@ -1,22 +1,22 @@
 `timescale 1ns / 1ps
 
 /*
-task1. input positive/negative integer/decimal number
+IO set for test
+task1. input all required value
 task2. detect illegal input
-task3. perform addition/multiplication
-TODO1. perform division
-TODO2. check overflow and give reminder
+task3. perform addition/ subtraction/ multiplication/ division
+TODO1. detect overflow
 */
 
-module calculator_top(input clk,
-              input reset,
-			  input key_pressed,
-              input [24:0] keypad_out,
-              output reg signed [49:0] reg_arg_display,
-              output reg reg_sign_display,
-              output reg reg_decimal_display,
-              output reg reg_error_display);
-
+module calculator_top(
+    input clk,
+    input reset,
+	input key_pressed,
+    input [24:0] keypad_out,
+    output reg signed [24:0] reg_arg_display,
+    output reg reg_sign_display,
+    output reg reg_decimal_display,
+    output reg reg_error_display);
 
 parameter FRACTION_BITS = 10;
 
@@ -30,10 +30,11 @@ localparam [3:0]
     state_decimal_pressed = 4'd4,
     state_plus_pressed = 4'd5,
     state_multiply_pressed = 4'd6,
-    state_calculate = 4'd7,
-	state_display_arg = 4'd8,
-    state_display_result = 4'd9,
-    state_display_error = 4'd10;
+    state_divide_pressed = 4'd7,
+	state_calculate = 4'd8,
+	state_display_arg = 4'd9,
+	state_display_result = 4'd10,
+	state_display_error = 4'd11;
 
 
 //calculator registers
@@ -48,7 +49,7 @@ reg [1:0] reg_operator;
 reg [1:0] reg_operator_next;
 
 reg signed [24:0] reg_arg;
-reg signed [49:0] reg_result;  //? TODO
+reg signed [34:0] reg_result;  // mul div
 
 reg key_pressed_prev;  // check new key come in
 
@@ -57,8 +58,8 @@ reg key_pressed_prev;  // check new key come in
 localparam [1:0]
 	OP_PLUS = 2'd0,
 	OP_MINUS = 2'd1,
-    OP_MULTIPLY = 2'd2;
-
+	OP_MULTIPLY = 2'd2,
+	OP_DIVIDE = 2'd3;
 
 always @(posedge clk or negedge reset)
 begin
@@ -103,6 +104,9 @@ begin
                         end
                         else if(keypad_out == 25'hC) begin
 						    state <= state_multiply_pressed;
+                        end
+                        else if(keypad_out == 25'hD) begin
+						    state <= state_divide_pressed;
                         end
                         else if(keypad_out == 25'hF) begin
                             state <= state_decimal_pressed;
@@ -187,18 +191,34 @@ begin
 					reg_operator_next <= OP_MULTIPLY;
 					state <= state_calculate;
 				end
+
+            state_divide_pressed:
+				begin
+					reg_operator_next <= OP_DIVIDE;
+					state <= state_calculate;
+				end
             
             state_calculate:
 				begin
+                    // addition
 					if(reg_operator == OP_PLUS) begin
-						/* verilator lint_off WIDTHEXPAND */
+                        /* verilator lint_off WIDTHEXPAND */
                         reg_result <= reg_result + reg_arg;
                         /* verilator lint_on WIDTHEXPAND */
 						state <= state_display_result;
                     end 
+
+                    // multiplication
                     else if(reg_operator == OP_MULTIPLY) begin
                         /* verilator lint_off WIDTHEXPAND */
-                        reg_result <= (reg_result * reg_arg) >>> FRACTION_BITS; //???
+                        reg_result <= (reg_result * reg_arg) >>> FRACTION_BITS; 
+                        /* verilator lint_on WIDTHEXPAND */
+						state <= state_display_result;
+					end 
+                    // division
+                    else if(reg_operator == OP_DIVIDE) begin
+                        /* verilator lint_off WIDTHEXPAND */
+                        reg_result <= (reg_result << FRACTION_BITS) / reg_arg;
                         /* verilator lint_on WIDTHEXPAND */
 						state <= state_display_result;
 					end 
@@ -207,27 +227,20 @@ begin
 
             state_display_arg: 
 				begin
-                    /* verilator lint_off WIDTHEXPAND */
-                    reg_arg_display <= reg_arg;
-                    /* verilator lint_on WIDTHEXPAND */
+                    // only test whether reg_arg get correct value
                     $display("reg_arg:");
                     $display(reg_arg / (1.0 * (1 << FRACTION_BITS)));
-                    reg_sign_display <= (reg_sign == OP_PLUS) ? 1 : 0;
-                    reg_decimal_display <= reg_decimal;
                     // input -> display
 					state <= state_read;
 				end
 
             state_display_result: 
 				begin
-					reg_arg_display <= reg_result;
                     $display("reg_result:");
                     $display(reg_result / (1.0 * (1 << FRACTION_BITS)));
-                    //reg_sign_display <= (reg_sign == OP_PLUS) ? 1 : 0;
-                    //reg_decimal_display <= reg_decimal;
                     // input -> display
 					state <= state_read;
-                    // ??
+                    // reset some reg
                     reg_arg <= 0;
                     reg_digits_counter <= 0; 
                     reg_decimal_place_counter <= 3'd1;  //! 1
