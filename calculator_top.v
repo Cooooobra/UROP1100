@@ -1,22 +1,30 @@
 `timescale 1ns / 1ps
 
 /*
-IO set for test
+IO set for test: 
 task1. input all required value
 task2. detect illegal input
 task3. perform addition/ subtraction/ multiplication/ division
-TODO1. detect overflow
+task4. detect overflow
+task5. reg_display split to sign/integer/fraction part
+task6. integer part convert bin 2 bcd
+TODO1. fraction part convert bin 2 bcd
+TODO2. assign sseg_abcd
 */
 
-module calculator_top(
-    input clk,
-    input reset,
-	input key_pressed,
-    input [24:0] keypad_out,
-    output reg signed [24:0] reg_arg_display,
-    output reg reg_sign_display,
-    output reg reg_decimal_display,
-    output reg reg_error_display);
+module calculator(input clk,
+              input reset,
+			  input key_pressed,
+              input [24:0] keypad_out,
+              //output reg signed [24:0] reg_arg_display,
+              //output reg reg_sign_display,
+              //output reg reg_decimal_display,
+              //output reg reg_error_display
+
+              output reg [18:0] bcd_int,
+              output reg [2:0] num_digits_int
+);
+
 
 parameter FRACTION_BITS = 10;
 
@@ -39,7 +47,7 @@ localparam [3:0]
 
 //calculator registers
 reg [2:0] reg_digits_counter;  
-reg [2:0] reg_decimal_place_counter;  //![2:0]
+reg [2:0] reg_decimal_place_counter;  
 
 reg [1:0] reg_sign;  //OP_PLUS or OP_MINUS
 reg reg_decimal;
@@ -50,6 +58,7 @@ reg [1:0] reg_operator_next;
 
 reg signed [24:0] reg_arg;
 reg signed [34:0] reg_result;  // mul div
+reg signed [24:0] reg_display;
 
 reg key_pressed_prev;  // check new key come in
 
@@ -60,6 +69,30 @@ localparam [1:0]
 	OP_MINUS = 2'd1,
 	OP_MULTIPLY = 2'd2,
 	OP_DIVIDE = 2'd3;
+
+/* verilator lint_off UNUSEDSIGNAL */
+wire neg;
+wire frac;
+wire [14:0] bin_int;
+wire [9:0] bin_frac;
+/* verilator lint_on UNUSEDSIGNAL */
+
+// component
+split inst_split(
+    .clk(clk),
+    .bin(reg_display),
+    .reg_neg(neg),
+    .reg_frac(frac),
+    .reg_bin_int(bin_int),
+    .reg_bin_frac(bin_frac)
+);
+
+bin2bcd_int inst_bin2bcd_int(
+    .bin(bin_int),
+    .bcd(bcd_int),
+    .int_digits(num_digits_int)
+);
+
 
 always @(posedge clk or negedge reset)
 begin
@@ -80,11 +113,14 @@ begin
                     reg_operator_next <= OP_PLUS;
 					reg_arg <= 0;
                     reg_result <= 0;
+                    reg_display <= 0;
                     key_pressed_prev <=0;  
-                    reg_arg_display <= 0;
-                    reg_sign_display <= 1; // 1 for plus
-                    reg_decimal_display <= 0;
-                    reg_error_display <= 0;
+
+                    //reg_arg_display <= 0;
+                    //reg_sign_display <= 1; // 1 for plus
+                    //reg_decimal_display <= 0;
+                    //reg_error_display <= 0;
+
 					// clear -> read
 					state <= state_read;
 				end
@@ -176,6 +212,7 @@ begin
                     end
                     else begin
                         //illegal input - no more than 1 decimal point
+                        reg_error <= 1;
                         state <= state_display_error;
                     end
                 end
@@ -215,6 +252,7 @@ begin
                         /* verilator lint_on WIDTHEXPAND */
 						state <= state_display_result;
 					end 
+
                     // division
                     else if(reg_operator == OP_DIVIDE) begin
                         /* verilator lint_off WIDTHEXPAND */
@@ -227,32 +265,43 @@ begin
 
             state_display_arg: 
 				begin
-                    // only test whether reg_arg get correct value
+                    reg_display <= reg_arg;
+                    //  test whether reg_arg and reg_display get correct value
                     $display("reg_arg:");
                     $display(reg_arg / (1.0 * (1 << FRACTION_BITS)));
-                    // input -> display
+                    $display("reg_display:");
+                    $display(reg_display / (1.0 * (1 << FRACTION_BITS)));
 					state <= state_read;
 				end
 
             state_display_result: 
 				begin
-                    $display("reg_result:");
-                    $display(reg_result / (1.0 * (1 << FRACTION_BITS)));
-                    // input -> display
-					state <= state_read;
-                    // reset some reg
-                    reg_arg <= 0;
+                    // check overflow
+                    if((reg_result - (9999 << FRACTION_BITS)) > 0 || (reg_result + (999 << FRACTION_BITS) < 0)) begin
+                        reg_error <= 1;
+                        state <= state_display_error;
+                    end 
+                    else begin
+                        reg_display <= reg_result[24:0];
+                        // check whether reg_arg and reg_display get correct result
+                        $display("reg_result:");
+                        $display(reg_result / (1.0 * (1 << FRACTION_BITS)));
+                        $display("reg_display:");
+                        $display(reg_display / (1.0 * (1 << FRACTION_BITS)));
+					    state <= state_read;
+                    end
+                    // reset some registers
                     reg_digits_counter <= 0; 
                     reg_decimal_place_counter <= 3'd1;  //! 1
+                    reg_arg <= 0;
                     reg_sign <= OP_PLUS;
                     reg_decimal <= 0;
-                    reg_error <= 0;
 				end
 
             state_display_error:
                 begin
-                    reg_error_display <= reg_error;
-                    //$display(reg_error_display);
+                    $display("error:");
+                    $display(reg_error);
                     state <= state_clear;
                 end
 
